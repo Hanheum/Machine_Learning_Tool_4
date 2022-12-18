@@ -3,6 +3,7 @@ from cupyx.scipy.signal import correlate, convolve
 from time import time
 from os import listdir
 from PIL import Image
+import math
 
 def no_effect(x):
     return x
@@ -27,29 +28,35 @@ def MSE_deriv(Y, Y_pred):
     dY_pred = -(2/m)*(Y-Y_pred)
     return dY_pred
 
-def softmax(a):
-    c = np.max(a)
-    exp_a = np.exp(a-c)
-    sum_exp_a = np.sum(exp_a)
-    y = exp_a/sum_exp_a
+def softmax(a_all):
+    y_all = np.zeros_like(a_all)
+    for i, a in enumerate(a_all):
+        c = np.max(a)
+        exp_a = np.exp(a-c)
+        sum_exp_a = np.sum(exp_a)
+        y = exp_a/sum_exp_a
+        y_all[i] = y
+    return y_all
 
-    return y
+def glorot_uniform(shape):
+    np.random.seed(0)
+    scale = 1/max(1., sum(shape)/2.)
+    limit = math.sqrt(3.0*scale)
+    weights = np.random.uniform(-limit, limit, size=shape)
+    return weights
 
 def softmax_deriv(a):
     softmaxed = softmax(a)
     return (1-softmaxed)*softmaxed
 
-def binary_cross_entropy(Y, Y_pred):
-    N = Y.shape[0]
-    Y_pred = np.clip(Y_pred, 1e-7, 1-1e-7)
-    L = (-1/N)*np.sum(Y.dot(np.log10(Y_pred.T))+(1-Y).dot(np.log10((1-Y_pred).T)))
-    return L
+def binary_cross_entropy(y_true, y_pred):
+    y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+    return -np.mean(y_true * np.log(y_pred + 1e-7) + (1 - y_true) * np.log(1 - y_pred + 1e-7))
 
-def binary_cross_entropy_deriv(Y, Y_pred):
-    N = Y.shape[0]
-    Y_pred = np.clip(Y_pred, 1e-7, 1-1e-7)
-    dY_pred = (-1/(N*np.log(10)))*(Y/Y_pred+(1-Y)/(1-Y_pred))
-    return dY_pred
+def binary_cross_entropy_deriv(y_true, y_pred):
+    y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+    cost = ((1 - y_true) / (1 - y_pred + 1e-7) - y_true / (y_pred + 1e-7)) / np.size(y_true)
+    return cost * 1000
 
 def sigmoid(x):
     return 1/(1+np.exp(-x))
@@ -128,7 +135,7 @@ class dense:
         self.b_shape = (self.nods, )
         self.output_shape = (self.nods, )
 
-        self.w = np.random.randn(*self.w_shape)
+        self.w = glorot_uniform(self.w_shape)
         self.b = np.zeros(self.b_shape)
 
         self.learning_rate = learning_rate
@@ -188,7 +195,7 @@ class conv2D:
         k_shape = (self.filters, self.input_shape[0], *self.kernel_size)
         output_shape = (self.filters, int(self.input_shape[1]-self.kernel_size[0]+1), int(self.input_shape[1]-self.kernel_size[0]+1))
         self.output_shape = output_shape
-        self.k = np.random.randn(*k_shape)
+        self.k = glorot_uniform(k_shape)
         self.b = np.zeros(output_shape)
 
         self.learning_rate = learning_rate
