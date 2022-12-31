@@ -4,6 +4,7 @@ from time import time
 from os import listdir
 from PIL import Image
 import math
+from random import sample
 
 def no_effect(x):
     return x
@@ -311,6 +312,8 @@ class model:
     def __init__(self, network, learning_rate=0.01, optimizer='gd', loss='mse'):
         self.network = network
 
+        self.optimizer = optimizer
+
         self.input_shapes = []
         self.types = ['input']
         self.activations_deriv = [no_effect_deriv]
@@ -369,10 +372,26 @@ class model:
         print('accuracy : {} %'.format(accuracy))
         return accuracy
 
-    def train(self, x, y, epochs=1):
+    def sgd(self, x, y, batch_size=32):
+        size = x.shape[0]
+        linear = np.linspace(0, size-1, size, endpoint=True).tolist()
+        seed = sample(linear, batch_size)
+        training_x = np.zeros((batch_size, *x.shape[1:]))
+        training_y = np.zeros((batch_size, *y.shape[1:]))
+        for i, a in enumerate(seed):
+            training_x[i] = x[a]
+            training_y[i] = y[a]
+        cost = self.backward_propagation(training_x, training_y)
+        return cost
+
+    def train(self, x, y, epochs=1, batch_size=32):
         for epoch in range(epochs):
             start = time()
-            loss = self.backward_propagation(x, y)
+            loss = 0
+            if self.optimizer == 'gd':
+                loss = self.backward_propagation(x, y)
+            elif self.optimizer == 'sgd':
+                loss = self.sgd(x, y, batch_size)
             end = time()
             duration = round(end-start, 3)
             print('epoch : {} | duration : {} seconds | loss : {}'.format(epoch+1, duration, loss))
