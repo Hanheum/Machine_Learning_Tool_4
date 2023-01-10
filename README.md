@@ -3,6 +3,7 @@ This is a single-filed machine learning platform. All the layers that are requir
 It utilizes Cupy instead of numpy for fast computing. 
 If you already can use keras, you probably can learn to use this tool in no time.
 
+
 Features:
 
  Layers:
@@ -15,17 +16,20 @@ Features:
  
  -Flatten layer
  
+ 
  Loss functions:
  
  -MSE
  
  -Categorical Crossentropy(with bugs, which should be fixed soon)
  
+ 
  Loading and Saving:
  
  -Load images and labels (optional)
  
  -Easy weight saving / loading (optional)
+ 
  
  Else:
  -Easy result prediction
@@ -36,9 +40,11 @@ Features:
  
  -Check accuracy with one line of code. (optional)
  
+ 
 Bugs to fix:
 
  -model doesn't learn when using categorical crossentropy loss function.
+ 
  
 *About Running Code Interection:  
 
