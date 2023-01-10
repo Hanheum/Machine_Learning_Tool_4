@@ -1,6 +1,6 @@
 import cupy as np
 from cupyx.scipy.signal import correlate, convolve
-from time import time
+from time import time, sleep
 from os import listdir
 from PIL import Image
 import math
@@ -119,10 +119,13 @@ class dense:
 
         self.x = np.array([])
 
-        self.w = 0
-        self.b = 0
+        self.w = np.array([])
+        self.b = np.array([])
 
         self.learning_rate = 0
+
+        self.dw = np.array([])
+        self.db = np.array([])
 
     def init2(self, input_shape, learning_rate=0.01):
         try:
@@ -149,12 +152,18 @@ class dense:
 
     def backward(self, dZ_next, previous_activation_derivative=1):
         m = len(self.x)
-        dw = (1/m)*self.x.T.dot(dZ_next)
-        db = (1/m)*sum(dZ_next)
+        self.dw = (1/m)*self.x.T.dot(dZ_next)
+        self.db = (1/m)*sum(dZ_next)
         dz = dZ_next.dot(self.w.T)*previous_activation_derivative
-        self.w = self.w - self.learning_rate*dw
-        self.b = self.b - self.learning_rate*db
         return dz
+
+    def apply_gradient(self):
+        self.w = self.w - self.learning_rate*self.dw
+        self.b = self.b - self.learning_rate*self.db
+
+    def reverse_gradient(self):
+        self.w = self.w + self.learning_rate*self.dw
+        self.b = self.b + self.learning_rate*self.db
 
 class conv2D:
     def __init__(self, filters, kernel_size, activation=None, input_shape=None):
@@ -185,6 +194,9 @@ class conv2D:
         self.b = np.array([])
 
         self.learning_rate = 0
+
+        self.dk = np.array([])
+        self.db = np.array([])
 
     def init2(self, input_shape, learning_rate=0.01):
         try:
@@ -221,12 +233,18 @@ class conv2D:
                 for j in range(self.input_shape[0]):
                     dk[i][j] += correlate(one_x[j], dz_next[a][i], mode='valid', method='direct')
                     dx[a][j] = convolve(dz_next[a][i], self.k[i][j], mode='full', method='direct')
-        dk = dk/m
-        db = sum(dz_next)/m
+        self.dk = dk/m
+        self.db = sum(dz_next)/m
         dz = dx*previous_activation_derivative
-        self.k = self.k - self.learning_rate*dk
-        self.b = self.b - self.learning_rate*db
         return dz
+
+    def apply_gradient(self):
+        self.k = self.k - self.learning_rate*self.dk
+        self.b = self.b - self.learning_rate*self.db
+
+    def reverse_gradient(self):
+        self.k = self.k + self.learning_rate*self.dk
+        self.b = self.b + self.learning_rate*self.db
 
 class avg_pool2D:
     def __init__(self, size, input_shape=None):
@@ -272,6 +290,12 @@ class avg_pool2D:
         dz = dx*previous_activation_derivative
         return dz
 
+    def apply_gradient(self):
+        pass
+
+    def reverse_gradient(self):
+        pass
+
 class flatten:
     def __init__(self, input_shape=None):
         self.type = 'flatten'
@@ -308,8 +332,14 @@ class flatten:
             dz[a] = np.reshape(one_dz_next, self.input_shape)
         return dz*previous_activation_derivative
 
+    def apply_gradient(self):
+        pass
+
+    def reverse_gradient(self):
+        pass
+
 class model:
-    def __init__(self, network, learning_rate=0.01, optimizer='gd', loss='mse'):
+    def __init__(self, network, learning_rate=0.01, optimizer='gd', loss='mse', static_lr=True, mid_epoch_codes=None):
         self.network = network
 
         self.optimizer = optimizer
@@ -336,6 +366,13 @@ class model:
         elif loss == 'binary_crossentropy':
             self.loss_fn = binary_cross_entropy
             self.loss_fn_deriv = binary_cross_entropy_deriv
+
+        self.learning_rates = [0.1, 0.01, 0.001]
+        self.static_lr = static_lr
+
+        self.mid_epoch_codes_dir = mid_epoch_codes
+        self.pauser = False
+        self.repeat = True
 
     def forward_propagation(self, x):
         Zs, As = [x], [x]
@@ -384,17 +421,75 @@ class model:
         cost = self.backward_propagation(training_x, training_y)
         return cost
 
+    def update_learning_rate(self, lr):
+        n = len(self.network)
+        for i in range(n):
+            self.network[i].learning_rate = lr
+
+    def apply_grad(self):
+        n = len(self.network)
+        for i in range(n):
+            self.network[i].apply_gradient()
+
+    def reverse_grad(self):
+        n = len(self.network)
+        for i in range(n):
+            self.network[i].reverse_gradient()
+
     def train(self, x, y, epochs=1, batch_size=32):
         for epoch in range(epochs):
+            if self.mid_epoch_codes_dir != None:
+                code = open(self.mid_epoch_codes_dir, 'r').read()
+                exec(code)
             start = time()
             loss = 0
-            if self.optimizer == 'gd':
-                loss = self.backward_propagation(x, y)
-            elif self.optimizer == 'sgd':
-                loss = self.sgd(x, y, batch_size)
-            end = time()
-            duration = round(end-start, 3)
-            print('epoch : {} | duration : {} seconds | loss : {}'.format(epoch+1, duration, loss))
+            if not self.pauser:
+                if self.optimizer == 'gd':
+                    loss = self.backward_propagation(x, y)
+                elif self.optimizer == 'sgd':
+                    loss = self.sgd(x, y, batch_size)
+                if self.static_lr:
+                    self.apply_grad()
+                else:
+                    costs = []
+                    for lr in self.learning_rates:
+                        self.update_learning_rate(lr)
+                        self.apply_grad()
+                        size = x.shape[0]
+                        linear = np.linspace(0, size - 1, size, endpoint=True).tolist()
+                        seed = sample(linear, batch_size)
+                        testing_x = np.zeros((batch_size, *x.shape[1:]))
+                        testing_y = np.zeros((batch_size, *y.shape[1:]))
+                        for i, a in enumerate(seed):
+                            testing_x[i] = x[a]
+                            testing_y[i] = y[a]
+                        pred = self.predict(x=testing_x)
+                        loss2 = self.loss_fn(testing_y, pred)
+                        costs.append(loss2)
+                        self.reverse_grad()
+                    minarg = np.argmin(np.array(costs))
+                    self.update_learning_rate(self.learning_rates[int(minarg)])
+                    self.apply_grad()
+                    loss = costs[int(minarg)]
+                end = time()
+                duration = round(end-start, 3)
+                print('epoch : {} | duration : {} seconds | loss : {}'.format(epoch+1, duration, loss))
+            else:
+                print('program is on pause')
+                while self.repeat:
+                    if self.mid_epoch_codes_dir != None:
+                        code = open(self.mid_epoch_codes_dir, 'r').read()
+                        exec(code)
+                        sleep(1)
+                print('program is now running')
+
+    def pause(self):
+        self.pauser = True
+        self.repeat = True
+
+    def release(self):
+        self.pauser = False
+        self.repeat = False
 
     def save(self, save_dir):
         shapes = open(save_dir+'\\shapes.txt', 'wb')
