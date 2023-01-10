@@ -70,3 +70,5 @@ Bugs to fix:
  -Switch between static learning rate and not static learning rate
  
  You can do basically anything that you want if it is written in python.
+ 
+Contact chh3653@gmail.com for more info
