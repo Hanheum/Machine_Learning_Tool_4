@@ -7,6 +7,7 @@ Features:
 
  Layers:
  -Dense layer
+ 
  -Convolutional 2D layer
  -Average pooling 2D layer
  -Flatten layer
