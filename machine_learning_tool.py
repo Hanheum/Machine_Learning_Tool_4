@@ -1,10 +1,11 @@
 import cupy as np
 from cupyx.scipy.signal import correlate, convolve
 from time import time, sleep
-from os import listdir
+from os import listdir, path, makedirs
 from PIL import Image
 import math
 from random import sample
+import struct
 
 def no_effect(x):
     return x
@@ -39,11 +40,11 @@ def softmax(a_all):
         y_all[i] = y
     return y_all
 
-def glorot_uniform(shape):
+def glorot_uniform(shape, dtype=float):
     np.random.seed(0)
     scale = 1/max(1., sum(shape)/2.)
     limit = math.sqrt(3.0*scale)
-    weights = np.random.uniform(-limit, limit, size=shape)
+    weights = np.random.uniform(-limit, limit, size=shape, dtype=dtype)
     return weights
 
 def softmax_deriv(a):
@@ -127,7 +128,9 @@ class dense:
         self.dw = np.array([])
         self.db = np.array([])
 
-    def init2(self, input_shape, learning_rate=0.01):
+        self.rounder = False
+
+    def init2(self, input_shape, learning_rate=0.01, dtype=float, rounder=False):
         try:
             if self.input_shape == None:
                 self.input_shape = input_shape
@@ -139,15 +142,19 @@ class dense:
         self.b_shape = (self.nods, )
         self.output_shape = (self.nods, )
 
-        self.w = glorot_uniform(self.w_shape)
-        self.b = np.zeros(self.b_shape)
+        self.w = glorot_uniform(self.w_shape, dtype=dtype)
+        self.b = np.zeros(self.b_shape, dtype=dtype)
 
         self.learning_rate = learning_rate
+
+        self.rounder = rounder
 
     def forward(self, x):
         self.x = x
         Z = np.add(x.dot(self.w), self.b)
         A = self.activation(Z)
+        if self.rounder:
+            A = np.round(A, 6)
         return Z, A
 
     def backward(self, dZ_next, previous_activation_derivative=1):
@@ -155,11 +162,17 @@ class dense:
         self.dw = (1/m)*self.x.T.dot(dZ_next)
         self.db = (1/m)*sum(dZ_next)
         dz = dZ_next.dot(self.w.T)*previous_activation_derivative
+        if self.rounder:
+            self.dw = np.round(self.dw, 6)
+            self.db = np.round(self.db, 6)
         return dz
 
     def apply_gradient(self):
         self.w = self.w - self.learning_rate*self.dw
         self.b = self.b - self.learning_rate*self.db
+        if self.rounder:
+            self.w = np.round(self.w, 6)
+            self.b = np.round(self.b, 6)
 
     def reverse_gradient(self):
         self.w = self.w + self.learning_rate*self.dw
@@ -198,7 +211,9 @@ class conv2D:
         self.dk = np.array([])
         self.db = np.array([])
 
-    def init2(self, input_shape, learning_rate=0.01):
+        self.rounder = False
+
+    def init2(self, input_shape, learning_rate=0.01, dtype=float, rounder=False):
         try:
             if self.input_shape == None:
                 self.input_shape = input_shape
@@ -208,10 +223,12 @@ class conv2D:
         k_shape = (self.filters, self.input_shape[0], *self.kernel_size)
         output_shape = (self.filters, int(self.input_shape[1]-self.kernel_size[0]+1), int(self.input_shape[1]-self.kernel_size[0]+1))
         self.output_shape = output_shape
-        self.k = glorot_uniform(k_shape)
-        self.b = np.zeros(output_shape)
+        self.k = glorot_uniform(k_shape, dtype=dtype)
+        self.b = np.zeros(output_shape, dtype=dtype)
 
         self.learning_rate = learning_rate
+
+        self.rounder = rounder
 
     def forward(self, x):
         self.x = x
@@ -222,6 +239,8 @@ class conv2D:
                     Z[a][i] += correlate(self.x[a][j], self.k[i][j], mode='valid', method='direct')
                 Z[a][i] += self.b[i]
         A = self.activation(Z)
+        if self.rounder:
+            A = np.round(A, 6)
         return Z, A
 
     def backward(self, dz_next, previous_activation_derivative):
@@ -236,11 +255,17 @@ class conv2D:
         self.dk = dk/m
         self.db = sum(dz_next)/m
         dz = dx*previous_activation_derivative
+        if self.rounder:
+            self.dk = np.round(self.dk, 6)
+            self.db = np.round(self.db, 6)
         return dz
 
     def apply_gradient(self):
         self.k = self.k - self.learning_rate*self.dk
         self.b = self.b - self.learning_rate*self.db
+        if self.rounder:
+            self.k = np.round(self.k, 6)
+            self.b = np.round(self.b, 6)
 
     def reverse_gradient(self):
         self.k = self.k + self.learning_rate*self.dk
@@ -263,7 +288,9 @@ class avg_pool2D:
 
         self.learning_rate = 0
 
-    def init2(self, input_shape, learning_rate=0.01):
+        self.rounder = False
+
+    def init2(self, input_shape, learning_rate=0.01, dtype=float, rounder=False):
         try:
             if self.input_shape == None:
                 self.input_shape = input_shape
@@ -272,12 +299,16 @@ class avg_pool2D:
         self.learning_rate = learning_rate
         self.output_shape = (self.input_shape[0], int(self.input_shape[1]-self.size[0]+1), int(self.input_shape[1]-self.size[0]+1))
 
+        self.rounder = rounder
+
     def forward(self, x):
         self.x = x
         Z = np.zeros((len(self.x), *self.output_shape))
         for a, one_x in enumerate(self.x):
             for i in range(one_x.shape[0]):
                 Z[a][i] = correlate(one_x[i], self.k, mode='valid', method='direct')
+        if self.rounder:
+            Z = np.round(Z, 6)
         return Z, Z
 
     def backward(self, dz_next, previous_activation_derivative):
@@ -288,6 +319,8 @@ class avg_pool2D:
                 dx[a][i] = correlate(one_dz_next[i], self.k, mode='full', method='direct')
         dx = dx/(m**2)
         dz = dx*previous_activation_derivative
+        if self.rounder:
+            dz = np.round(dz, 6)
         return dz
 
     def apply_gradient(self):
@@ -310,7 +343,7 @@ class flatten:
 
         self.learning_rate = 0
 
-    def init2(self, input_shape, learning_rate=0.01):
+    def init2(self, input_shape, learning_rate=0.01, dtype=float, rounder=False):
         try:
             if self.input_shape == None:
                 self.input_shape = input_shape
@@ -339,7 +372,7 @@ class flatten:
         pass
 
 class model:
-    def __init__(self, network, learning_rate=0.01, optimizer='gd', loss='mse', static_lr=True, mid_epoch_codes=None):
+    def __init__(self, network, learning_rate=0.01, optimizer='gd', loss='mse', static_lr=True, mid_epoch_codes=None, dtype='float32', arduino=False):
         self.network = network
 
         self.optimizer = optimizer
@@ -353,7 +386,7 @@ class model:
             self.activations_deriv.append(layer.activation_deriv)
         for i in range(len(self.network)):
             try:
-                self.network[i].init2(self.input_shapes[i], learning_rate)
+                self.network[i].init2(self.input_shapes[i], learning_rate, dtype=dtype, rounder=arduino)
                 self.input_shapes[i+1] = self.network[i].output_shape
             except:
                 pass
@@ -491,28 +524,31 @@ class model:
         self.pauser = False
         self.repeat = False
 
-    def save(self, save_dir):
+    def save(self, save_dir, dtype='float32'):
+        if path.exists(save_dir) == False:
+            makedirs(save_dir)
+
         shapes = open(save_dir+'\\shapes.txt', 'wb')
         shapes_txt = ''
         for count, layer in enumerate(self.network):
             if layer.type == 'dense':
                 file1 = open(save_dir + '\\{}w'.format(count), 'wb')
-                file1.write(layer.w.tobytes())
+                file1.write(layer.w.astype(dtype).tobytes())
                 file1.close()
 
                 file2 = open(save_dir + '\\{}b'.format(count), 'wb')
-                file2.write(layer.b.tobytes())
+                file2.write(layer.b.astype(dtype).tobytes())
                 file2.close()
 
                 shapes_txt += '{}\n'.format(layer.w.shape)
                 shapes_txt += '{}\n'.format(layer.b.shape)
             elif layer.type == 'conv2D':
                 file1 = open(save_dir + '\\{}k'.format(count), 'wb')
-                file1.write(layer.k.tobytes())
+                file1.write(layer.k.astype(dtype).tobytes())
                 file1.close()
 
                 file2 = open(save_dir + '\\{}b'.format(count), 'wb')
-                file2.write(layer.b.tobytes())
+                file2.write(layer.b.astype(dtype).tobytes())
                 file2.close()
 
                 shapes_txt += '{}\n'.format(layer.k.shape)
@@ -527,7 +563,7 @@ class model:
         shapes.write(shapes_txt.encode())
         shapes.close()
 
-    def load(self, save_dir):
+    def load(self, save_dir, dtype='float32'):
         try:
             shapes = open(save_dir+'\\shapes.txt', 'rb').readlines()
             files = listdir(save_dir)
@@ -536,22 +572,125 @@ class model:
             for count, layer in enumerate(self.network):
                 if layer.type == 'conv2D':
                     file1 = open(save_dir+'\\{}'.format(files[int(2*count+1)]), 'rb').read()
-                    kernel = np.frombuffer(file1)
+                    kernel = np.frombuffer(file1, dtype=dtype)
                     kernel = np.reshape(kernel, eval(shapes[int(2*count)]))
 
                     file2 = open(save_dir+'\\{}'.format(files[int(2*count)]), 'rb').read()
-                    bias = np.frombuffer(file2)
+                    bias = np.frombuffer(file2, dtype=dtype)
                     bias = np.reshape(bias, eval(shapes[int(2*count+1)]))
 
                     layer.k = kernel
                     layer.b = bias
                 elif layer.type == 'dense':
                     file1 = open(save_dir+'\\{}'.format(files[int(2*count+1)]), 'rb').read()
-                    weight = np.frombuffer(file1)
+                    weight = np.frombuffer(file1, dtype=dtype)
                     weight = np.reshape(weight, eval(shapes[int(2*count)]))
 
                     file2 = open(save_dir+'\\{}'.format(files[int(2*count)]), 'rb').read()
-                    bias = np.frombuffer(file2)
+                    bias = np.frombuffer(file2, dtype=dtype)
+                    bias = np.reshape(bias, eval(shapes[int(2*count+1)]))
+
+                    layer.w = weight
+                    layer.b = bias
+        except:
+            pass
+
+    def save_for_arduino(self, save_dir):
+        if path.exists(save_dir) == False:
+            makedirs(save_dir)
+
+        shapes = open(save_dir + '\\shapes.txt', 'wb')
+        shapes_txt = ''
+        for count, layer in enumerate(self.network):
+            if layer.type == 'dense':
+                file1 = open(save_dir + '\\{}w'.format(count), 'wb')
+                arr = np.round(layer.w, 6)
+                arr = np.reshape(arr, (arr.size, ))
+                byte_like = b''
+                for i in arr:
+                    byte_like += struct.pack('f', i)
+                file1.write(byte_like)
+                file1.close()
+
+                file2 = open(save_dir + '\\{}b'.format(count), 'wb')
+                arr = np.round(layer.b, 6)
+                arr = np.reshape(arr, (arr.size,))
+                byte_like = b''
+                for i in arr:
+                    byte_like += struct.pack('f', i)
+                file2.write(byte_like)
+                file2.close()
+
+                shapes_txt += '{}\n'.format(layer.w.shape)
+                shapes_txt += '{}\n'.format(layer.b.shape)
+            elif layer.type == 'conv2D':
+                file1 = open(save_dir + '\\{}k'.format(count), 'wb')
+                arr = np.round(layer.k, 6)
+                arr = np.reshape(arr, (arr.size,))
+                byte_like = b''
+                for i in arr:
+                    byte_like += struct.pack('f', i)
+                file1.write(byte_like)
+                file1.close()
+
+                file2 = open(save_dir + '\\{}b'.format(count), 'wb')
+                arr = np.round(layer.b, 6)
+                arr = np.reshape(arr, (arr.size,))
+                byte_like = b''
+                for i in arr:
+                    byte_like += struct.pack('f', i)
+                file2.write(byte_like)
+                file2.close()
+
+                shapes_txt += '{}\n'.format(layer.k.shape)
+                shapes_txt += '{}\n'.format(layer.b.shape)
+            else:
+                file1 = open(save_dir+'\\{}a'.format(count), 'wb')
+                file1.close()
+                file2 = open(save_dir+'\\{}b'.format(count), 'wb')
+                file2.close()
+                shapes_txt += 'a\n'
+                shapes_txt += 'b\n'
+        shapes.write(shapes_txt.encode())
+        shapes.close()
+
+    def load_for_arduino(self, save_dir):
+        try:
+            shapes = open(save_dir+'\\shapes.txt', 'rb').readlines()
+            files = listdir(save_dir)
+            files.remove('shapes.txt')
+            files.sort(key=lambda f: int(''.join(filter(str.isdigit, f))))
+            for count, layer in enumerate(self.network):
+                if layer.type == 'conv2D':
+                    file1 = open(save_dir+'\\{}'.format(files[int(2*count+1)]), 'rb')
+                    kernel = np.zeros(eval(shapes[int(2*count)]))
+                    kernel = np.reshape(kernel, (kernel.size, ))
+                    for i in range(kernel.size):
+                        kernel[i] = struct.unpack('f', file1.read(4))[0]
+                    kernel = np.reshape(kernel, eval(shapes[int(2*count)]))
+
+                    file2 = open(save_dir+'\\{}'.format(files[int(2*count)]), 'rb')
+                    bias = np.zeros(eval(shapes[int(2*count+1)]))
+                    bias = np.reshape(bias, (bias.size, ))
+                    for i in range(bias.size):
+                        bias[i] = struct.unpack('f', file2.read(4))[0]
+                    bias = np.reshape(bias, eval(shapes[int(2*count+1)]))
+
+                    layer.k = kernel
+                    layer.b = bias
+                elif layer.type == 'dense':
+                    file1 = open(save_dir+'\\{}'.format(files[int(2*count+1)]), 'rb')
+                    weight = np.zeros(eval(shapes[int(2*count)]))
+                    weight = np.reshape(weight, (weight.size, ))
+                    for i in range(weight.size):
+                        weight[i] = struct.unpack('f', file1.read(4))[0]
+                    weight = np.reshape(weight, eval(shapes[int(2*count)]))
+
+                    file2 = open(save_dir+'\\{}'.format(files[int(2*count)]), 'rb')
+                    bias = np.zeros(eval(shapes[int(2*count+1)]))
+                    bias = np.reshape(bias, (bias.size, ))
+                    for i in range(bias.size):
+                        bias[i] = struct.unpack('f', file2.read(4))[0]
                     bias = np.reshape(bias, eval(shapes[int(2*count+1)]))
 
                     layer.w = weight
