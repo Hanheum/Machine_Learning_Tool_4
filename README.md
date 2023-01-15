@@ -21,7 +21,7 @@ Features:
  
  -MSE
  
- -Categorical Crossentropy(with bugs, which should be fixed soon)
+ -Binary Crossentropy
  
  
  Loading and Saving:
@@ -43,7 +43,7 @@ Features:
  
 Bugs to fix:
 
- -model doesn't learn when using categorical crossentropy loss function.
+ -None for known
  
  
 *About Running Code Interection:  
