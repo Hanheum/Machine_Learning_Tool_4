@@ -97,7 +97,7 @@ def load_images(dataset_dir, size, mode='RGB', limit=None):
     return images, labels
 
 class dense:
-    def __init__(self, nods, activation=None, input_shape=None):
+    def __init__(self, nods, activation=None, input_shape=None, trainable=True):
         self.type = 'dense'
 
         self.nods = nods
@@ -129,8 +129,11 @@ class dense:
         self.db = np.array([])
 
         self.rounder = False
+        self.training_mode = True
 
-    def init2(self, input_shape, learning_rate=0.01, dtype=float, rounder=False):
+        self.trainable = trainable
+
+    def init2(self, input_shape, learning_rate=0.01, dtype=float, rounder=False, training_mode=True):
         try:
             if self.input_shape == None:
                 self.input_shape = input_shape
@@ -148,6 +151,7 @@ class dense:
         self.learning_rate = learning_rate
 
         self.rounder = rounder
+        self.training_mode = training_mode
 
     def forward(self, x):
         self.x = x
@@ -168,18 +172,19 @@ class dense:
         return dz
 
     def apply_gradient(self):
-        self.w = self.w - self.learning_rate*self.dw
-        self.b = self.b - self.learning_rate*self.db
-        if self.rounder:
-            self.w = np.round(self.w, 6)
-            self.b = np.round(self.b, 6)
+        if self.trainable:
+            self.w = self.w - self.learning_rate*self.dw
+            self.b = self.b - self.learning_rate*self.db
+            if self.rounder:
+                self.w = np.round(self.w, 6)
+                self.b = np.round(self.b, 6)
 
     def reverse_gradient(self):
         self.w = self.w + self.learning_rate*self.dw
         self.b = self.b + self.learning_rate*self.db
 
 class conv2D:
-    def __init__(self, filters, kernel_size, activation=None, input_shape=None):
+    def __init__(self, filters, kernel_size, activation=None, input_shape=None, trainable=True):
         self.type = 'conv2D'
 
         self.filters = filters
@@ -212,8 +217,11 @@ class conv2D:
         self.db = np.array([])
 
         self.rounder = False
+        self.training_mode = True
 
-    def init2(self, input_shape, learning_rate=0.01, dtype=float, rounder=False):
+        self.trainable = trainable
+
+    def init2(self, input_shape, learning_rate=0.01, dtype=float, rounder=False, training_mode=True):
         try:
             if self.input_shape == None:
                 self.input_shape = input_shape
@@ -229,6 +237,7 @@ class conv2D:
         self.learning_rate = learning_rate
 
         self.rounder = rounder
+        self.training_mode = training_mode
 
     def forward(self, x):
         self.x = x
@@ -261,11 +270,12 @@ class conv2D:
         return dz
 
     def apply_gradient(self):
-        self.k = self.k - self.learning_rate*self.dk
-        self.b = self.b - self.learning_rate*self.db
-        if self.rounder:
-            self.k = np.round(self.k, 6)
-            self.b = np.round(self.b, 6)
+        if self.trainable:
+            self.k = self.k - self.learning_rate*self.dk
+            self.b = self.b - self.learning_rate*self.db
+            if self.rounder:
+                self.k = np.round(self.k, 6)
+                self.b = np.round(self.b, 6)
 
     def reverse_gradient(self):
         self.k = self.k + self.learning_rate*self.dk
@@ -289,8 +299,9 @@ class avg_pool2D:
         self.learning_rate = 0
 
         self.rounder = False
+        self.training_mode = True
 
-    def init2(self, input_shape, learning_rate=0.01, dtype=float, rounder=False):
+    def init2(self, input_shape, learning_rate=0.01, dtype=float, rounder=False, training_mode=True):
         try:
             if self.input_shape == None:
                 self.input_shape = input_shape
@@ -300,6 +311,7 @@ class avg_pool2D:
         self.output_shape = (self.input_shape[0], int(self.input_shape[1]-self.size[0]+1), int(self.input_shape[1]-self.size[0]+1))
 
         self.rounder = rounder
+        self.training_mode = training_mode
 
     def forward(self, x):
         self.x = x
@@ -343,7 +355,9 @@ class flatten:
 
         self.learning_rate = 0
 
-    def init2(self, input_shape, learning_rate=0.01, dtype=float, rounder=False):
+        self.training_mode = True
+
+    def init2(self, input_shape, learning_rate=0.01, dtype=float, rounder=False, training_mode=True):
         try:
             if self.input_shape == None:
                 self.input_shape = input_shape
@@ -351,6 +365,7 @@ class flatten:
             pass
         self.learning_rate = learning_rate
         self.output_shape = (int(np.prod(np.array(self.input_shape))), )
+        self.training_mode = training_mode
 
     def forward(self, x):
         self.x = x
@@ -371,8 +386,69 @@ class flatten:
     def reverse_gradient(self):
         pass
 
+class dropout:
+    def __init__(self, ratio, input_shape=None):
+        self.type = 'dropout'
+
+        self.ratio = ratio
+        self.input_shape = input_shape
+        self.output_shape = ()
+        self.activation_fn = None
+        self.activation = no_effect
+        self.activation_deriv = no_effect_deriv
+
+        self.x = np.array([])
+
+        self.learning_rate = 0
+        self.rounder = False
+
+        self.training_mode = True
+        self.arr = np.array([])
+
+    def init2(self, input_shape, learning_rate=0.01, dtype=float, rounder=False, training_mode=True):
+        try:
+            if self.input_shape == None:
+                self.input_shape = input_shape
+        except:
+            pass
+        self.learning_rate = learning_rate
+        self.rounder = rounder
+        self.training_mode = training_mode
+        self.output_shape = input_shape
+
+    def forward(self, x):
+        self.x = x
+        if self.training_mode:
+            arr_size = self.x.size
+            how_many_zeros = round(arr_size*self.ratio)
+            self.arr = np.ones((arr_size))
+            linear = np.linspace(0, arr_size - 1, arr_size, endpoint=True).tolist()
+            seed = sample(linear, how_many_zeros)
+            for i in seed:
+                self.arr[i] = 0
+            self.arr = np.reshape(self.arr, self.x.shape)
+            Z = self.x*self.arr
+        else:
+            Z = self.x*(1-self.ratio)
+        if self.rounder:
+            Z = np.round(Z, 6)
+        return Z, Z
+
+    def backward(self, dz_next, previous_activation_derivative):
+        dz = dz_next*self.arr
+        if self.rounder:
+            return np.round(dz, 6)
+        else:
+            return dz
+
+    def apply_gradient(self):
+        pass
+
+    def reverse_gradient(self):
+        pass
+
 class model:
-    def __init__(self, network, learning_rate=0.01, optimizer='gd', loss='mse', static_lr=True, mid_epoch_codes=None, dtype='float32', arduino=False):
+    def __init__(self, network, learning_rate=0.01, optimizer='gd', loss='mse', static_lr=True, mid_epoch_codes=None, dtype='float32', arduino=False, training_mode=True):
         self.network = network
 
         self.optimizer = optimizer
@@ -386,7 +462,7 @@ class model:
             self.activations_deriv.append(layer.activation_deriv)
         for i in range(len(self.network)):
             try:
-                self.network[i].init2(self.input_shapes[i], learning_rate, dtype=dtype, rounder=arduino)
+                self.network[i].init2(self.input_shapes[i], learning_rate, dtype=dtype, rounder=arduino, training_mode=training_mode)
                 self.input_shapes[i+1] = self.network[i].output_shape
             except:
                 pass
@@ -428,8 +504,12 @@ class model:
         return loss
 
     def predict(self, x):
+        for i in range(len(self.network)):
+            self.network[i].training_mode = False
         Zs, As = self.forward_propagation(x)
         prediction = As[-1]
+        for i in range(len(self.network)):
+            self.network[i].training_mode = True
         return prediction
 
     def accuracy_check(self, x, y):
